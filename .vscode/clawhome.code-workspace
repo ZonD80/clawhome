@@ -1,0 +1,54 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		}
+	],
+	"settings": {
+		"git.ignoreLimitWarning": true
+	},
+	"launch": {
+		"configurations": [
+			{
+				"type": "swift",
+				"request": "launch",
+				"args": [],
+				"cwd": "${workspaceFolder:clawhome}/claw-vm",
+				"name": "Debug ClawVMRunner (clawhome/claw-vm)",
+				"target": "ClawVMRunner",
+				"configuration": "debug",
+				"preLaunchTask": "swift: Build Debug ClawVMRunner (clawhome/claw-vm)"
+			},
+			{
+				"type": "swift",
+				"request": "launch",
+				"args": [],
+				"cwd": "${workspaceFolder:clawhome}/claw-vm",
+				"name": "Release ClawVMRunner (clawhome/claw-vm)",
+				"target": "ClawVMRunner",
+				"configuration": "release",
+				"preLaunchTask": "swift: Build Release ClawVMRunner (clawhome/claw-vm)"
+			},
+			{
+				"type": "swift",
+				"request": "launch",
+				"args": [],
+				"cwd": "${workspaceFolder:clawhome}/claw-vm",
+				"name": "Debug ClawVMManager (clawhome/claw-vm)",
+				"target": "ClawVMManager",
+				"configuration": "debug",
+				"preLaunchTask": "swift: Build Debug ClawVMManager (clawhome/claw-vm)"
+			},
+			{
+				"type": "swift",
+				"request": "launch",
+				"args": [],
+				"cwd": "${workspaceFolder:clawhome}/claw-vm",
+				"name": "Release ClawVMManager (clawhome/claw-vm)",
+				"target": "ClawVMManager",
+				"configuration": "release",
+				"preLaunchTask": "swift: Build Release ClawVMManager (clawhome/claw-vm)"
+			}
+		]
+	}
+}

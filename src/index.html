@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ClawHome</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+
+<body>
+  <div id="app">
+    <div id="update-banner" class="update-banner" style="display: none;">
+      <span>New version <a id="update-link" href="#" target="_blank" rel="noopener"></a> available</span>
+      <button id="update-dismiss" class="btn-update-dismiss" aria-label="Dismiss">×</button>
+    </div>
+    <div id="screens">
+      <section id="screen-welcome" class="screen active">
+        <h1>ClawHome <span id="app-version" class="app-version"></span></h1>
+        <p class="tagline">Give your Claw a home</p>
+        <button id="btn-give-home" class="btn-primary">Give your Claw a home</button>
+      </section>
+
+      <section id="screen-config" class="screen">
+        <h2>Create a home</h2>
+        <div class="form-group">
+          <label for="home-name">Enter your bot name</label>
+          <input type="text" id="home-name" placeholder="myhome" />
+        </div>
+        <p class="form-section-label">Choose home size</p>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="disk-gb">Storage (GB)</label>
+            <input type="number" id="disk-gb" min="8" max="512" value="32" />
+          </div>
+          <div class="form-group">
+            <label for="ram-gb">Memory (GB)</label>
+            <input type="number" id="ram-gb" min="4" max="64" value="4" />
+          </div>
+        </div>
+        <div class="form-actions">
+          <button id="btn-create" class="btn-primary">Create</button>
+          <button id="btn-back-config" class="btn-secondary">Back</button>
+        </div>
+        <p id="config-error" class="error"></p>
+      </section>
+
+      <section id="screen-install" class="screen">
+        <h2>Preparing a home</h2>
+        <p id="install-status">Preparing…</p>
+        <div class="progress-bar">
+          <div id="install-progress" class="progress-fill"></div>
+        </div>
+        <p id="install-percent">0%</p>
+        <div id="install-tips" class="install-tips">
+          <p class="install-tip active" data-tip="0">Right-click the VM icon in the dock and choose "Paste to [name]'s home" to paste to claw's home</p>
+          <p class="install-tip" data-tip="1">Downloads folder is shared with your claw's home, use it to exchange files
+          </p>
+          <p class="install-tip" data-tip="2">Run multiple homes if you need to</p>
+        </div>
+        <div id="install-error-actions" class="form-actions" style="display: none; margin-top: 1rem;">
+          <button id="btn-install-back" class="btn-secondary">Back to homes</button>
+        </div>
+      </section>
+
+      <section id="screen-homes" class="screen">
+        <h2>Your bots' homes</h2>
+        <div id="home-list"></div>
+        <div class="form-actions">
+          <button id="btn-new-home" class="btn-primary">New home</button>
+          <button id="btn-open-clawhome" class="btn-link">Open clawhome directory</button>
+        </div>
+      </section>
+    </div>
+    <footer id="app-footer">
+      <span id="footer-version"></span>
+    </footer>
+  </div>
+  <script type="module" src="./main.js"></script>
+</body>
+
+</html>

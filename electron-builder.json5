@@ -1,0 +1,36 @@
+/**
+ * @see https://www.electron.build/configuration/configuration
+ */
+{
+  appId: "home.claw",
+  productName: "ClawHome",
+  directories: {
+    output: "release/${version}",
+  },
+  files: ["dist", "dist-electron"],
+  extraResources: [
+    {
+      from: "dist-electron/resources/ClawVMManager",
+      to: "ClawVMManager",
+    },
+    {
+      from: "dist-electron/resources/ClawVMRunner",
+      to: "ClawVMRunner",
+    },
+    {
+      from: "dist-electron/resources/ClawVM",
+      to: "ClawVM",
+    },
+  ],
+  mac: {
+    target: [{ target: "dmg", arch: ["arm64"] }],
+    artifactName: "${productName}-Mac-${version}-${arch}.${ext}",
+    category: "public.app-category.developer-tools",
+    identity: "F44ZS9HT2P",
+    entitlements: "build/entitlements.mac.plist",
+    entitlementsInherit: "build/entitlements.mac.plist",
+    hardenedRuntime: true,
+    notarize: false,
+  },
+  afterPack: "scripts/afterPack.cjs",
+}
