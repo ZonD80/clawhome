@@ -35,12 +35,21 @@ cp "$MANAGER" dist-electron/resources/ClawVMManager
 cp "$RUNNER" dist-electron/resources/ClawVMRunner
 cp "$MANAGER" dist-electron/resources/ClawVM
 
+if [ ! -f bin/go-smb2 ]; then
+  echo "[ClawHome] ERROR: bin/go-smb2 not found - required for SMB backup share"
+  exit 1
+fi
+cp bin/go-smb2 dist-electron/resources/go-smb2
+echo "[ClawHome] Copied go-smb2"
+
 # Sign with Developer ID (afterPack will re-sign in app bundle; this keeps dist-electron consistent)
 IDENTITY="F44ZS9HT2P"
 echo "[ClawHome] Signing with Developer ID and virtualization entitlement..."
 codesign --force --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" dist-electron/resources/ClawVMManager || { echo "[ClawHome] ERROR: Failed to sign ClawVMManager"; exit 1; }
 codesign --force --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" dist-electron/resources/ClawVMRunner || { echo "[ClawHome] ERROR: Failed to sign ClawVMRunner"; exit 1; }
 codesign --force --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" dist-electron/resources/ClawVM || { echo "[ClawHome] ERROR: Failed to sign ClawVM"; exit 1; }
+codesign --force --sign "$IDENTITY" dist-electron/resources/go-smb2 || { echo "[ClawHome] ERROR: Failed to sign go-smb2"; exit 1; }
+echo "[ClawHome] go-smb2 signed"
 
 # Verify Runner has virtualization entitlement (required for VM display)
 if ! codesign -d --entitlements - dist-electron/resources/ClawVMRunner 2>/dev/null | grep -q "com.apple.security.virtualization"; then

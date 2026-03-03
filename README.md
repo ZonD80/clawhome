@@ -20,6 +20,10 @@ You don't need to buy a separate mac anymore.
 
 ![Home Access](screenshots/3.png)
 
+**Backups** — Time Machine backups, so in case it is ducked up, you can restore it easily
+
+![Backups](screenshots/4.png)
+
 ## Features
 
 - **macOS VMs** — Create macOS guests with automatic IPSW download (latest supported) or use your own
@@ -34,6 +38,7 @@ All data lives under `~/clawhome/` so it persists across app updates:
 | Path | Purpose |
 | ---- | ------- |
 | `~/clawhome/homes/` | VM disk images and configs |
+| `~/clawhome/backups/` | Backup destination (exposed via SMB when a VM is running) |
 | `~/clawhome/Shared/` | Shared clipboard (guest mounts at /Volumes/My Shared Files) |
 | `~/clawhome/userData/` | Electron app data (cookies, cache, etc.) |
 
@@ -45,6 +50,15 @@ When a VM is running, these host directories are shared and appear in the guest 
 | ------------------------------ | ------------------------------------ | -------- |
 | `~/Downloads`                  | `/Volumes/My Shared Files/Downloads` | Yes      |
 | `~/clawhome/Shared/clipboard` | `/Volumes/My Shared Files/clipboard` | Yes      |
+
+## Backup and restore
+
+ClawHome runs a built-in SMB backup server when at least one home is running. The `~/clawhome/backups` folder is exposed as a network share (**ClawHomeBackups**) so you can:
+
+- **Time Machine** — Add the ClawHomeBackups share as a backup destination. Your homes will be backed up automatically alongside the rest of your data.
+- **Transfer to another Mac** — Mount the share from another Mac on the same network (or via the VM’s NAT) and copy homes to the new machine.
+
+Keep ClawHome open while backing up or transferring. The share is available at `192.168.64.1:8082` when a VM is running.
 
 ## Clipboard syncing
 
@@ -88,3 +102,7 @@ clawhome/
 ├── claw-vm/           # Swift VM backend (ClawVM)
 └── scripts/           # Build scripts
 ```
+
+## Acknowledgements
+
+- [go-smb2](https://github.com/macos-fuse-t/go-smb2) — SMB server for the built-in backup share

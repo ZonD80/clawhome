@@ -1,6 +1,6 @@
 {
   "name": "clawhome",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A secure home to your Clawbot, so you don't need to buy separate mac",
   "main": "dist-electron/main/index.js",
   "type": "module",
@@ -25,9 +25,18 @@
       "output": "release/${version}"
     },
     "extraResources": [
-      { "from": "dist-electron/resources/ClawVMManager", "to": "ClawVMManager" },
-      { "from": "dist-electron/resources/ClawVMRunner", "to": "ClawVMRunner" },
-      { "from": "dist-electron/resources/ClawVM", "to": "ClawVM" }
+      {
+        "from": "dist-electron/resources/ClawVMManager",
+        "to": "ClawVMManager"
+      },
+      {
+        "from": "dist-electron/resources/ClawVMRunner",
+        "to": "ClawVMRunner"
+      },
+      {
+        "from": "dist-electron/resources/ClawVM",
+        "to": "ClawVM"
+      }
     ],
     "mac": {
       "icon": "icon.png",

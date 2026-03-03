@@ -3,6 +3,7 @@ import Carbon.HIToolbox.Events
 import CoreGraphics
 import CoreImage
 import CoreVideo
+import Darwin
 import Foundation
 import IOSurface
 import Metal
@@ -63,7 +64,8 @@ public enum ClawVMConstants {
             .appendingPathComponent("IPSWCache")
     }
     static let vmRamMb: UInt64 = 4096
-    static let vmCpus = 2
+    /// Use all available host CPU cores.
+    static var vmCpus: Int { max(2, ProcessInfo.processInfo.processorCount) }
 }
 
 public struct VMConfig: Codable {
@@ -464,7 +466,7 @@ public class ClawVMManager {
                 p.auxiliaryStorage = auxiliaryStorage
                 return p
             }()
-            config.cpuCount = max(2, configToUse.minimumSupportedCPUCount)
+            config.cpuCount = max(configToUse.minimumSupportedCPUCount, ProcessInfo.processInfo.processorCount)
             var memBytes = max(4 * 1024 * 1024 * 1024, configToUse.minimumSupportedMemorySize)
             if let data = try? Data(contentsOf: configPath),
                 let c = try? JSONDecoder().decode(VMConfig.self, from: data)
@@ -509,7 +511,7 @@ public class ClawVMManager {
             view.virtualMachine = vm
             view.capturesSystemKeys = true
             if #available(macOS 14.0, *) {
-                view.automaticallyReconfiguresDisplay = true
+                view.automaticallyReconfiguresDisplay = false  // Lock to 1920×1200 @ 92 PPI (normal DPI)
             }
 
             let window = NSWindow(
@@ -753,7 +755,7 @@ public class ClawVMManager {
         view.virtualMachine = vm
         view.capturesSystemKeys = true
         if #available(macOS 14.0, *) {
-            view.automaticallyReconfiguresDisplay = true
+            view.automaticallyReconfiguresDisplay = false  // Lock to 1920×1200 @ 92 PPI (normal DPI)
         }
 
         let automator = VZAutomator(view: view)

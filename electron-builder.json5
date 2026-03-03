@@ -21,6 +21,10 @@
       from: "dist-electron/resources/ClawVM",
       to: "ClawVM",
     },
+    {
+      from: "dist-electron/resources/go-smb2",
+      to: "go-smb2",
+    },
   ],
   mac: {
     target: [{ target: "dmg", arch: ["arm64"] }],

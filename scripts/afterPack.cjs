@@ -30,13 +30,20 @@ module.exports = async function (context) {
   // Use VM-specific entitlements (virtualization only) - same as ai-employee HoustonVM.entitlements
   const clawVmEntitlements = path.join(projectDir, "claw-vm", "ClawVM.entitlements");
 
-  const binaries = ["ClawVMManager", "ClawVMRunner", "ClawVM"];
-  for (const name of binaries) {
+  const vmBinaries = ["ClawVMManager", "ClawVMRunner", "ClawVM"];
+  for (const name of vmBinaries) {
     const binaryPath = path.join(resourcesDir, name);
     if (fs.existsSync(binaryPath)) {
       console.log("[afterPack] Signing", name, "with virtualization entitlement...");
       signBinary(binaryPath, clawVmEntitlements);
       console.log("[afterPack]", name, "signed");
     }
+  }
+
+  const goSmb2Path = path.join(resourcesDir, "go-smb2");
+  if (fs.existsSync(goSmb2Path)) {
+    console.log("[afterPack] Signing go-smb2...");
+    signBinary(goSmb2Path, null);
+    console.log("[afterPack] go-smb2 signed");
   }
 };

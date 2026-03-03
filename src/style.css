@@ -56,6 +56,13 @@ body {
   color: var(--openclaw);
 }
 
+.backup-notice {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0.5rem 0 0 0;
+  text-align: center;
+}
+
 .update-banner {
   display: flex;
   align-items: center;

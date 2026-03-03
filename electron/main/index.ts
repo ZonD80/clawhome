@@ -13,12 +13,14 @@ import {
   showConsoleVm,
 } from "./vm-manager.js";
 import { startClawVm, stopClawVm } from "./claw-vm-launcher.js";
+import { startSmbBackup, stopSmbBackup } from "./smb-backup-launcher.js";
 
 // Set userData before app is ready so data persists across app updates
 const CLAWHOME_DIR = join(homedir(), "clawhome");
 app.setPath("userData", join(CLAWHOME_DIR, "userData"));
 
 const CLAWHOME_HOMES_DIR = join(CLAWHOME_DIR, "homes");
+const CLAWHOME_BACKUPS_DIR = join(CLAWHOME_DIR, "backups");
 
 function safeForIPC<T>(value: T): T {
   if (value === undefined || value === null) return value;
@@ -77,6 +79,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   mkdirSync(CLAWHOME_HOMES_DIR, { recursive: true });
+  mkdirSync(CLAWHOME_BACKUPS_DIR, { recursive: true });
   createWindow();
 
   (async () => {
@@ -85,12 +88,18 @@ app.whenReady().then(() => {
     });
     if (!result.ok) {
       console.warn("[ClawHome] ClawVM:", result.message);
+    } else {
+      const vms = await listVms().catch(() => []);
+      if (vms.some((v) => v.status === "running")) {
+        setTimeout(() => startSmbBackup(), 10_000);
+      }
     }
   })();
 });
 
 app.on("before-quit", () => {
   isQuitting = true;
+  stopSmbBackup();
   stopClawVm();
 });
 
@@ -224,10 +233,23 @@ ipcMain.handle(
   "vm-install-progress",
   async (_, vmId: string) => safeForIPC(await installProgress(vmId))
 );
-ipcMain.handle("vm-start", async (_, vmId: string) => safeForIPC(await startVm(vmId)));
+ipcMain.handle("vm-start", async (_, vmId: string) => {
+  const result = await startVm(vmId);
+  if (result.ok) {
+    setTimeout(() => startSmbBackup(), 10_000);
+  }
+  return safeForIPC(result);
+});
 ipcMain.handle(
   "vm-stop",
-  async (_, vmId: string, force?: boolean) => safeForIPC(await stopVm(vmId, force))
+  async (_, vmId: string, force?: boolean) => {
+    const result = await stopVm(vmId, force);
+    if (result.ok) {
+      const vms = await listVms().catch(() => []);
+      if (!vms.some((v) => v.status === "running")) stopSmbBackup();
+    }
+    return safeForIPC(result);
+  }
 );
 ipcMain.handle("vm-delete", async (_, vmId: string) => safeForIPC(await deleteVm(vmId)));
 ipcMain.handle(

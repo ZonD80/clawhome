@@ -33,7 +33,7 @@ echo "[build] ClawVM binaries verified in dist-electron/resources/"
 
 echo "[build] Packaging with electron-builder (arm64, code signing)..."
 CSC_NAME="F44ZS9HT2P" \
-  npx electron-builder --mac --arm64
+  npx electron-builder --mac --arm64 --config electron-builder.json5
 
 VERSION=$(node -p "require('./package.json').version")
 APP_RESOURCES="release/$VERSION/mac-arm64/ClawHome.app/Contents/Resources"
