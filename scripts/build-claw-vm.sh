@@ -7,15 +7,9 @@ IDENTITY="F44ZS9HT2P"
 echo "[ClawHome] Building ClawVMManager and ClawVMRunner (release)..."
 cd "$VM_DIR"
 swift build -c release
-
-ARCH=$(uname -m)
-if [ "$ARCH" = "arm64" ]; then
-  MANAGER=".build/arm64-apple-macosx/release/ClawVMManager"
-  RUNNER=".build/arm64-apple-macosx/release/ClawVMRunner"
-else
-  MANAGER=".build/x86_64-apple-macosx/release/ClawVMManager"
-  RUNNER=".build/x86_64-apple-macosx/release/ClawVMRunner"
-fi
+BIN=$(swift build -c release --show-bin-path)
+MANAGER="$BIN/ClawVMManager"
+RUNNER="$BIN/ClawVMRunner"
 
 if [ ! -f "$MANAGER" ] || [ ! -f "$RUNNER" ]; then
   echo "[ClawHome] ClawVMManager or ClawVMRunner not found"
@@ -32,5 +26,5 @@ fi
 
 cd ..
 mkdir -p dist-electron/resources
-./scripts/copy-claw-vm.sh
+CLAWHOME_SWIFT_CONFIG=release ./scripts/copy-claw-vm.sh
 echo "[ClawHome] ClawVMManager and ClawVMRunner built and copied"

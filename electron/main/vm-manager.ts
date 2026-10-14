@@ -96,6 +96,10 @@ export interface CreateVmOptions {
   ramMb?: number;
   diskGb?: number;
   ipswPath?: string;
+  guestType?: string;
+  imageUrl?: string;
+  fmmJson?: string;
+  fmmSourcePath?: string;
 }
 
 export async function createVm(
@@ -103,11 +107,14 @@ export async function createVm(
 ): Promise<{ ok: boolean; vm?: VmInfo; error?: string }> {
   try {
     const body = JSON.stringify({
-      guest_type: "macos",
+      guest_type: options.guestType ?? "macos",
       name: options.name,
       ram_mb: options.ramMb ?? 4096,
       disk_gb: options.diskGb ?? 32,
       ipsw_path: options.ipswPath ?? undefined,
+      image_url: options.imageUrl || undefined,
+      fmm_json: options.fmmJson || undefined,
+      fmm_source_path: options.fmmSourcePath || undefined,
     });
     const data = await request<{ ok: boolean; vm?: VmInfo; error?: string }>("/create", {
       method: "POST",

@@ -8,7 +8,36 @@ try {
       ramMb?: number;
       diskGb?: number;
       ipswPath?: string;
+      guestType?: string;
+      imageUrl?: string;
+      fmmJson?: string;
+      fmmSourcePath?: string;
     }) => ipcRenderer.invoke("vm-create", options),
+    lookupBiaRelease: () => ipcRenderer.invoke("lookup-bia-release"),
+    pickDiskImage: () => ipcRenderer.invoke("pick-disk-image"),
+    loadFmmFile: () => ipcRenderer.invoke("load-fmm-file"),
+    checkFmm: (input: {
+      provider?: string;
+      apiKey?: string;
+      model?: string;
+      baseUrl?: string;
+      ctx?: number;
+      chatgpt?: unknown;
+      sourcePath?: string;
+    }) => ipcRenderer.invoke("check-fmm", input),
+    listFmmModels: (input: {
+      provider?: string;
+      apiKey?: string;
+      model?: string;
+      baseUrl?: string;
+      chatgpt?: unknown;
+    }) => ipcRenderer.invoke("fmm-list-models", input),
+    signInChatGpt: () => ipcRenderer.invoke("fmm-chatgpt-sign-in"),
+    onChatgptStatus: (cb: (status: string) => void) => {
+      const listener = (_event: unknown, status: string) => cb(status);
+      ipcRenderer.on("fmm-chatgpt-status", listener);
+      return () => ipcRenderer.removeListener("fmm-chatgpt-status", listener);
+    },
     vmInstallProgress: (vmId: string) => ipcRenderer.invoke("vm-install-progress", vmId),
     vmStart: (vmId: string) => ipcRenderer.invoke("vm-start", vmId),
     vmStop: (vmId: string, force?: boolean) => ipcRenderer.invoke("vm-stop", vmId, force),

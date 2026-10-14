@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
@@ -14,6 +15,9 @@ import {
 } from "./vm-manager.js";
 import { startClawVm, stopClawVm } from "./claw-vm-launcher.js";
 import { startSmbBackup, stopSmbBackup } from "./smb-backup-launcher.js";
+import { checkFmm, listCloudModels, readFmmFile, type FmmRequest } from "./fmm.js";
+import { signInChatGpt } from "./chatgpt.js";
+import { lookupBiaRelease } from "./bia-release.js";
 
 // Set userData before app is ready so data persists across app updates
 const CLAWHOME_DIR = join(homedir(), "clawhome");
@@ -41,9 +45,9 @@ function createWindow() {
   const iconPath = join(__dirname, "../../icon.png");
   mainWindow = new BrowserWindow({
     width: 420,
-    height: 520,
+    height: 760,
     minWidth: 360,
-    minHeight: 400,
+    minHeight: 480,
     show: false,
     icon: iconPath,
     webPreferences: {
@@ -191,7 +195,7 @@ ipcMain.handle(
     const { response } = await dialog.showMessageBox(mainWindow!, {
       type: "warning",
       message: "Are you sure to close this Home?",
-      detail: "Make sure you shut down macOS inside in order to prevent data loss.",
+      detail: "Make sure you shut down the system inside in order to prevent data loss.",
       buttons: ["Cancel", "Close immediately"],
     });
     return response === 1 ? "close" : "cancel";
@@ -221,12 +225,75 @@ ipcMain.handle(
     return "overwrite";
   }
 );
+ipcMain.handle("lookup-bia-release", async () => {
+  try {
+    return { ok: true as const, ...(await lookupBiaRelease()) };
+  } catch (err) {
+    return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+ipcMain.handle("pick-disk-image", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow!, {
+    title: "bia disk image",
+    filters: [{ name: "Disk image", extensions: ["img"] }],
+    properties: ["openFile"],
+  });
+  if (canceled || !filePaths[0]) return null;
+  return pathToFileURL(filePaths[0]).href;
+});
+ipcMain.handle("load-fmm-file", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow!, {
+    title: "fmm.json",
+    filters: [{ name: "FMM keys", extensions: ["json"] }],
+    properties: ["openFile"],
+  });
+  if (canceled || !filePaths[0]) return null;
+  try {
+    return { ok: true as const, ...readFmmFile(filePaths[0]) };
+  } catch (err) {
+    return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+ipcMain.handle("check-fmm", async (_, input: FmmRequest) => {
+  try {
+    return { ok: true as const, ...(await checkFmm(input ?? {})) };
+  } catch (err) {
+    return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+ipcMain.handle("fmm-list-models", async (_, input: FmmRequest) => {
+  try {
+    return { ok: true as const, ...(await listCloudModels(input ?? {})) };
+  } catch (err) {
+    return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+ipcMain.handle("fmm-chatgpt-sign-in", async () => {
+  try {
+    const auth = await signInChatGpt(
+      (url) => shell.openExternal(url),
+      (status) => mainWindow?.webContents.send("fmm-chatgpt-status", status)
+    );
+    return { ok: true as const, auth };
+  } catch (err) {
+    return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+  }
+});
 ipcMain.handle("vm-list", async () => safeForIPC(await listVms()));
 ipcMain.handle(
   "vm-create",
   async (
     _,
-    options: { name: string; ramMb?: number; diskGb?: number; ipswPath?: string }
+    options: {
+      name: string;
+      ramMb?: number;
+      diskGb?: number;
+      ipswPath?: string;
+      guestType?: string;
+      imageUrl?: string;
+      fmmJson?: string;
+      fmmSourcePath?: string;
+    }
   ) => safeForIPC(await createVm(options))
 );
 ipcMain.handle(

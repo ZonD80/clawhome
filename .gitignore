@@ -3,3 +3,4 @@ node_modules/
 dist-electron/
 claw-vm/.build/
 release/
+.DS_Store

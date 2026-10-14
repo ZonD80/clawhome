@@ -27,9 +27,113 @@
           <label for="home-name">Enter your bot name</label>
           <input type="text" id="home-name" placeholder="myhome" />
         </div>
+        <p class="form-section-label">System</p>
+        <div class="os-choice">
+          <label><input type="radio" name="guest-type" value="macos" checked /> macOS</label>
+          <label><input type="radio" name="guest-type" value="linux" /> Linux (bia)</label>
+        </div>
+        <p id="linux-release-note" class="field-hint" hidden></p>
+        <div id="linux-image-group" class="form-group" hidden>
+          <label for="image-url">Disk image URL</label>
+          <input type="text" id="image-url" placeholder="file:///…/bia.img" spellcheck="false" />
+          <p class="field-hint">The GitHub release was not usable. Paste a file:// path to a raw bia disk image (dist/bia.img).</p>
+          <button type="button" id="btn-pick-image" class="btn-secondary">Choose image…</button>
+        </div>
+        <div id="linux-fmm-group" hidden>
+          <label class="fmm-toggle">
+            <input type="checkbox" id="fmm-enabled" checked />
+            Use a cloud AI (needs an API key)
+          </label>
+          <div id="fmm-fields">
+            <p class="fmm-heading">Use your ChatGPT plan</p>
+            <div id="fmm-chatgpt-signed" hidden>
+              <p class="field-hint" id="fmm-chatgpt-email"></p>
+              <button type="button" id="btn-chatgpt-out" class="btn-secondary">Sign out</button>
+            </div>
+            <div id="fmm-chatgpt-start">
+              <button type="button" id="btn-chatgpt" class="btn-chatgpt">Continue with ChatGPT</button>
+              <p class="field-hint">bia itself is free. With ChatGPT, bia's requests count toward your ChatGPT plan's limits. Nothing is charged by bia.</p>
+            </div>
+            <div id="fmm-key-block">
+              <p class="fmm-heading">Or use an API key</p>
+              <details id="fmm-key-help" open>
+                <summary>How do I get an API key?</summary>
+                <ol class="key-steps">
+                  <li>Open the provider's page and sign up (or sign in).</li>
+                  <li>Add a little credit with a card. A few dollars lasts a long time.</li>
+                  <li>Press "Create key", copy the key, and paste it here.</li>
+                </ol>
+                <div class="key-guide">
+                  <p><strong>OpenRouter (easiest)</strong> <button type="button" class="btn-link" data-url="https://openrouter.ai/settings/keys">Get a key</button> <button type="button" class="btn-link" data-url="https://openrouter.ai/settings/credits">Add credit</button></p>
+                  <p class="field-hint">One key for almost every AI: Grok, Claude, GPT, DeepSeek, Qwen and more. Best place to start.</p>
+                </div>
+                <div class="key-guide">
+                  <p><strong>OpenAI (GPT)</strong> <button type="button" class="btn-link" data-url="https://platform.openai.com/api-keys">Get a key</button> <button type="button" class="btn-link" data-url="https://platform.openai.com/settings/organization/billing/overview">Add credit</button></p>
+                  <p class="field-hint">The makers of ChatGPT. Have ChatGPT Plus or Pro? Skip the key and press Continue with ChatGPT instead. An API key is billed separately.</p>
+                </div>
+                <div class="key-guide">
+                  <p><strong>Anthropic (Claude)</strong> <button type="button" class="btn-link" data-url="https://platform.claude.com/settings/keys">Get a key</button> <button type="button" class="btn-link" data-url="https://platform.claude.com/settings/billing">Add credit</button></p>
+                  <p class="field-hint">The makers of Claude. A Claude.ai subscription does not include this. API credit is bought separately.</p>
+                </div>
+                <div class="key-guide">
+                  <p><strong>xAI (Grok)</strong> <button type="button" class="btn-link" data-url="https://console.x.ai">Get a key</button></p>
+                  <p class="field-hint">The makers of Grok. Add credit in the console, then create a key.</p>
+                </div>
+                <div class="key-guide">
+                  <p><strong>DeepSeek</strong> <button type="button" class="btn-link" data-url="https://platform.deepseek.com/api_keys">Get a key</button> <button type="button" class="btn-link" data-url="https://platform.deepseek.com/top_up">Add credit</button></p>
+                  <p class="field-hint">Low prices. Top up first, then create a key.</p>
+                </div>
+                <div class="key-guide">
+                  <p><strong>Qwen (Alibaba Cloud Model Studio)</strong> <button type="button" class="btn-link" data-url="https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key">Get a key</button></p>
+                  <p class="field-hint">Alibaba's Qwen models. Create the key in Model Studio. New accounts may get free trial tokens.</p>
+                </div>
+                <p class="field-hint">The key is saved on the home's disk so bia can use it. Keep that disk safe, like a house key.</p>
+              </details>
+              <button type="button" id="btn-load-fmm" class="btn-secondary">Load fmm.json…</button>
+              <div class="form-group">
+                <label for="fmm-provider">Provider</label>
+                <select id="fmm-provider">
+                  <option value="">From the key</option>
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="xai">xAI</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="qwen">Qwen</option>
+                  <option value="chatgpt" id="fmm-provider-chatgpt" hidden>ChatGPT</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="fmm-key">API key</label>
+                <input type="password" id="fmm-key" autocomplete="off" spellcheck="false" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="fmm-model">Model</label>
+              <input type="text" id="fmm-model" placeholder="deepseek/deepseek-v4.1-flash" spellcheck="false" />
+            </div>
+            <div class="form-group" id="fmm-model-search-group" hidden>
+              <label for="fmm-model-search">Search models</label>
+              <input type="text" id="fmm-model-search" placeholder="name or id" spellcheck="false" />
+            </div>
+            <div id="fmm-model-list" class="model-list" hidden></div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="fmm-ctx">Context</label>
+                <input type="number" id="fmm-ctx" min="512" max="2000000" value="131072" />
+              </div>
+              <div class="form-group">
+                <label for="fmm-base-url">Base URL</label>
+                <input type="text" id="fmm-base-url" placeholder="optional" spellcheck="false" />
+              </div>
+            </div>
+            <p id="fmm-status" class="field-hint"></p>
+            <p class="field-hint">Checked with a real request before the home is created. A model that cannot call tools is rejected. The key is then stored in plaintext at EFI/bia/fmm.json on the disk. A ChatGPT sign-in is for this home only.</p>
+          </div>
+        </div>
         <p class="form-section-label">Choose home size</p>
         <div class="form-row">
-          <div class="form-group">
+          <div class="form-group" id="disk-group">
             <label for="disk-gb">Storage (GB)</label>
             <input type="number" id="disk-gb" min="8" max="512" value="32" />
           </div>
@@ -48,6 +152,7 @@
       <section id="screen-install" class="screen">
         <h2>Preparing a home</h2>
         <p id="install-status">Preparing…</p>
+        <p id="install-hello" class="field-hint" hidden></p>
         <div class="progress-bar">
           <div id="install-progress" class="progress-fill"></div>
         </div>

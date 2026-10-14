@@ -92,6 +92,10 @@ func handleRequest(method: String, path: String, body: Data?) async -> (Int, Dat
         var ramMb: Int?
         var diskGb: Int?
         var ipswPath: String?
+        var guestType: String?
+        var imageUrl: String?
+        var fmmJson: String?
+        var fmmSourcePath: String?
         if let body = body,
             let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
         {
@@ -99,12 +103,19 @@ func handleRequest(method: String, path: String, body: Data?) async -> (Int, Dat
             if let n = obj["ram_mb"] as? NSNumber { ramMb = n.intValue }
             if let n = obj["disk_gb"] as? NSNumber { diskGb = n.intValue }
             if let p = obj["ipsw_path"] as? String, !p.isEmpty { ipswPath = p }
+            if let g = obj["guest_type"] as? String, !g.isEmpty { guestType = g }
+            if let u = obj["image_url"] as? String, !u.isEmpty { imageUrl = u }
+            if let j = obj["fmm_json"] as? String, !j.isEmpty { fmmJson = j }
+            if let s = obj["fmm_source_path"] as? String, !s.isEmpty { fmmSourcePath = s }
         }
         guard let vmName = name?.trimmingCharacters(in: .whitespaces), !vmName.isEmpty else {
             return (400, jsonResponse(["ok": false, "error": "Missing or empty name"]), "application/json")
         }
         do {
-            let vm = try manager.createVM(name: vmName, ramMb: ramMb, diskGb: diskGb, ipswPath: ipswPath)
+            let vm = try manager.createVM(
+                name: vmName, ramMb: ramMb, diskGb: diskGb, ipswPath: ipswPath,
+                guestType: guestType, imageUrl: imageUrl, fmmJson: fmmJson,
+                fmmSourcePath: fmmSourcePath)
             return (200, jsonResponse(["ok": true, "vm": vm]), "application/json")
         } catch {
             return (500, jsonResponse(["ok": false, "error": error.localizedDescription]), "application/json")

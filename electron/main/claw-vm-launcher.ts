@@ -1,8 +1,8 @@
 import { app } from "electron";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, realpathSync, statSync, unlinkSync } from "node:fs";
 import { createConnection } from "node:net";
 import { waitForPortFile, getVmPort, VM_PORT_FILE } from "./claw-ports.js";
 
@@ -46,6 +46,64 @@ function isPortInUse(port: number): Promise<boolean> {
 
 let clawVmProcess: ChildProcess | null = null;
 
+function execText(cmd: string, args: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { encoding: "utf8" }, (err, stdout) => {
+      if (err) resolve(null);
+      else resolve(stdout);
+    });
+  });
+}
+
+async function listenerPid(port: number): Promise<number | null> {
+  const out = await execText("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]);
+  const pid = parseInt(out?.trim().split("\n")[0] ?? "", 10);
+  return Number.isFinite(pid) ? pid : null;
+}
+
+/** True when the process already listening is this binary and was started after it was built. */
+async function managerIsCurrent(port: number, binary: string): Promise<boolean> {
+  const pid = await listenerPid(port);
+  if (pid == null) return true;
+  const txt = await execText("lsof", ["-a", "-p", String(pid), "-d", "txt", "-Fn"]);
+  const openPath = txt
+    ?.split("\n")
+    .find((line) => line.startsWith("n"))
+    ?.slice(1);
+  if (!openPath) return false;
+  try {
+    if (realpathSync(openPath) !== realpathSync(binary)) return false;
+  } catch {
+    return false;
+  }
+  const started = Date.parse((await execText("ps", ["-p", String(pid), "-o", "lstart="]))?.trim() ?? "");
+  if (!Number.isFinite(started)) return true;
+  return statSync(binary).mtimeMs <= started + 2000;
+}
+
+async function stopListener(port: number): Promise<void> {
+  const pid = await listenerPid(port);
+  if (pid == null) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  for (let i = 0; i < 20; i++) {
+    if (!(await isPortInUse(port))) return;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    /* already gone */
+  }
+  for (let i = 0; i < 10; i++) {
+    if (!(await isPortInUse(port))) return;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
 export async function startClawVm(options?: {
   onProgress?: (message: string) => void;
 }): Promise<{ ok: boolean; message: string }> {
@@ -54,11 +112,13 @@ export async function startClawVm(options?: {
   }
 
   const existingPort = getVmPort();
-  if (existingPort != null) {
-    const alreadyRunning = await isPortInUse(existingPort);
-    if (alreadyRunning) {
+  if (existingPort != null && (await isPortInUse(existingPort))) {
+    const currentBinary = getClawVmBinary();
+    if (currentBinary && (await managerIsCurrent(existingPort, currentBinary))) {
       return { ok: true, message: "ClawVM already running" };
     }
+    options?.onProgress?.("Replacing ClawVM with the current build...");
+    await stopListener(existingPort);
   }
 
   const binary = getClawVmBinary();

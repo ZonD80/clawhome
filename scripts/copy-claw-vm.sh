@@ -2,18 +2,14 @@
 set -e
 cd "$(dirname "$0")/.."
 
-ARCH=$(uname -m)
-if [ "$ARCH" = "arm64" ]; then
-  MANAGER="claw-vm/.build/arm64-apple-macosx/debug/ClawVMManager"
-  [ -f "$MANAGER" ] || MANAGER="claw-vm/.build/arm64-apple-macosx/release/ClawVMManager"
-  RUNNER="claw-vm/.build/arm64-apple-macosx/debug/ClawVMRunner"
-  [ -f "$RUNNER" ] || RUNNER="claw-vm/.build/arm64-apple-macosx/release/ClawVMRunner"
-else
-  MANAGER="claw-vm/.build/x86_64-apple-macosx/debug/ClawVMManager"
-  [ -f "$MANAGER" ] || MANAGER="claw-vm/.build/x86_64-apple-macosx/release/ClawVMManager"
-  RUNNER="claw-vm/.build/x86_64-apple-macosx/debug/ClawVMRunner"
-  [ -f "$RUNNER" ] || RUNNER="claw-vm/.build/x86_64-apple-macosx/release/ClawVMRunner"
-fi
+# Swift 6 writes products under .build/out, not the old triple directory.
+# --show-bin-path does not compile, so build first.
+CONFIG="${CLAWHOME_SWIFT_CONFIG:-debug}"
+(cd claw-vm && swift build -c "$CONFIG")
+BIN=$(cd claw-vm && swift build -c "$CONFIG" --show-bin-path)
+MANAGER="$BIN/ClawVMManager"
+RUNNER="$BIN/ClawVMRunner"
+echo "[ClawHome] ClawVM products: $BIN"
 
 if [ ! -f "$MANAGER" ]; then
   echo "[ClawHome] ClawVMManager not found at $MANAGER, run: cd claw-vm && swift build"

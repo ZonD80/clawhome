@@ -30,6 +30,8 @@ body {
   max-width: 400px;
   margin: 0 auto;
   min-height: 100vh;
+  max-height: 100vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
 }
@@ -210,6 +212,128 @@ h1, h2 {
   margin: 0.5rem 0 0.5rem 0;
 }
 
+.os-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.os-choice label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.os-choice input {
+  accent-color: var(--lobster-red);
+}
+
+.field-hint {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin: 0.35rem 0 0;
+  line-height: 1.35;
+}
+
+.fmm-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.25rem 0 0.75rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.fmm-toggle input {
+  accent-color: var(--lobster-red);
+}
+
+.fmm-heading {
+  margin: 0.75rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.btn-chatgpt {
+  width: 100%;
+  margin: 0.25rem 0 0.5rem;
+  padding: 0.7rem 1rem;
+  border: none;
+  border-radius: 18px;
+  background: #101010;
+  color: #fff;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.btn-chatgpt:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+#fmm-key-help {
+  margin: 0.5rem 0 0.75rem;
+  font-size: 0.85rem;
+}
+
+#fmm-key-help summary {
+  cursor: pointer;
+  margin-bottom: 0.4rem;
+}
+
+.key-steps {
+  margin: 0.25rem 0 0.75rem;
+  padding-left: 1.2rem;
+  color: var(--text-muted);
+}
+
+.key-guide {
+  margin-bottom: 0.55rem;
+}
+
+.key-guide p {
+  margin: 0.15rem 0;
+}
+
+.model-list {
+  max-height: 140px;
+  overflow-y: auto;
+  margin: 0 0 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+}
+
+.model-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--white);
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.model-list button.selected,
+.model-list button:hover {
+  background: var(--lobster-red-dark);
+}
+
+.home-kind {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
 .form-group {
   margin-bottom: 1rem;
 }
@@ -221,7 +345,8 @@ h1, h2 {
   font-size: 0.9rem;
 }
 
-.form-group input {
+.form-group input,
+.form-group select {
   width: 100%;
   padding: 0.6rem;
   background: var(--bg-card);

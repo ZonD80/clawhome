@@ -1,5 +1,7 @@
 import AppKit
 import Carbon.HIToolbox.Events
+import CryptoKit
+import Cxz
 import CoreGraphics
 import CoreImage
 import CoreVideo
@@ -77,6 +79,7 @@ public struct VMConfig: Codable {
     var isoPath: String?
     var ipswPath: String?
     var macAddress: String?  // Persistent MAC for NAT-DHCP (same MAC -> same IP across restarts)
+    var imageUrl: String?  // Linux bia disk image: file:// path or https URL
 }
 
 @MainActor
@@ -271,8 +274,22 @@ public class ClawVMManager {
     }
 
     public func createVM(
-        name: String, ramMb: Int? = nil, diskGb: Int? = nil, ipswPath: String? = nil
+        name: String, ramMb: Int? = nil, diskGb: Int? = nil, ipswPath: String? = nil,
+        guestType: String? = nil, imageUrl: String? = nil, fmmJson: String? = nil,
+        fmmSourcePath: String? = nil
     ) throws -> [String: Any] {
+        let kind = (guestType ?? "macos").lowercased()
+        print("[ClawVM] createVM guestType=\(kind) imageUrl=\(imageUrl ?? "nil")")
+        guard kind == "macos" || kind == "linux" else {
+            throw NSError(
+                domain: "ClawVM", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Unknown system \(kind)"])
+        }
+        var image = imageUrl?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if kind == "linux" && image.isEmpty {
+            image = "https://github.com/zond80/bia/releases/latest"
+        }
+
         try FileManager.default.createDirectory(
             at: ClawVMConstants.vmsDir, withIntermediateDirectories: true)
         let id = sanitizeName(name)
@@ -293,17 +310,27 @@ public class ClawVMManager {
         try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
 
         let effectiveRamMb = ramMb ?? 4096
-        let effectiveDiskGb = diskGb ?? 32
+        let effectiveDiskGb = diskGb ?? (kind == "linux" ? 16 : 32)
 
         let config = VMConfig(
             id: id, name: name, ramMb: effectiveRamMb, diskGb: effectiveDiskGb,
-            guestType: "macos", isoPath: nil, ipswPath: ipswPath, macAddress: nil)
+            guestType: kind, isoPath: nil, ipswPath: kind == "macos" ? ipswPath : nil,
+            macAddress: nil, imageUrl: kind == "linux" ? image : nil)
         let configData = try JSONEncoder().encode(config)
         try configData.write(to: vmDir.appendingPathComponent("config.json"))
-        Task { await createMacOSVMAndInstall(id: id, vmDir: vmDir, ipswPath: ipswPath) }
+        if kind == "linux" {
+            let keys = fmmJson
+            let keySource = fmmSourcePath
+            Task {
+                await createLinuxVMAndInstall(
+                    id: id, vmDir: vmDir, imageUrl: image, fmmJson: keys, fmmSourcePath: keySource)
+            }
+        } else {
+            Task { await createMacOSVMAndInstall(id: id, vmDir: vmDir, ipswPath: ipswPath) }
+        }
         return [
             "id": id, "name": name, "path": vmDir.path, "status": "installing",
-            "ramMb": effectiveRamMb, "diskGb": effectiveDiskGb, "guestType": "macos",
+            "ramMb": effectiveRamMb, "diskGb": effectiveDiskGb, "guestType": kind,
         ]
     }
 
@@ -340,6 +367,561 @@ public class ClawVMManager {
         resolved = (resolved as NSString).standardizingPath
         guard FileManager.default.fileExists(atPath: resolved) else { return nil }
         return resolved
+    }
+
+    /// Download or copy a raw bia disk image, then leave the home ready to boot.
+    /// `imageUrl` is a file:// path, an https URL, or a GitHub repo / release.
+    /// A GitHub release with an arm64 .img is downloaded as-is. The published bia
+    /// release is `bia-arm64.img.xz` from bia-os.json, unpacked onto the home disk.
+    func createLinuxVMAndInstall(
+        id: String, vmDir: URL, imageUrl: String, fmmJson: String? = nil, fmmSourcePath: String? = nil
+    ) async {
+        let dataDir = vmDir.appendingPathComponent("Data")
+        let diskPath = dataDir.appendingPathComponent("disk.img")
+        let configPath = vmDir.appendingPathComponent("config.json")
+        macOSInstallError.removeValue(forKey: id)
+        macOSCreatingProgress[id] = ("Finding disk image", 0)
+        do {
+            let location = try await resolveDiskImage(imageUrl)
+            switch location {
+            case .local(let path):
+                macOSCreatingProgress[id] = ("Copying disk image", 0.05)
+                try await cloneOrCopyDisk(from: path, to: diskPath)
+            case .remote(let url):
+                _ = try await downloadWithProgress(from: url, vmId: id, to: diskPath)
+            case .githubRelease(let tag):
+                try await writeReleaseDisk(osTag: tag, to: diskPath, vmId: id)
+            }
+            macOSCreatingProgress[id] = ("Preparing disk", 0.9)
+            let diskGb = try assertBootableDiskImage(diskPath)
+            if let fmmJson, !fmmJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                macOSCreatingProgress[id] = ("Writing cloud AI key", 0.96)
+                try await writeFmmToEsp(diskImage: diskPath, json: fmmJson, sourcePath: fmmSourcePath)
+            }
+            let efiURL = dataDir.appendingPathComponent("efi-variable-store")
+            if !FileManager.default.fileExists(atPath: efiURL.path) {
+                _ = try VZEFIVariableStore(creatingVariableStoreAt: efiURL, options: [])
+            }
+            if let data = try? Data(contentsOf: configPath),
+                var vmConfig = try? JSONDecoder().decode(VMConfig.self, from: data)
+            {
+                vmConfig.diskGb = diskGb
+                vmConfig.imageUrl = imageUrl
+                vmConfig.guestType = "linux"
+                try? JSONEncoder().encode(vmConfig).write(to: configPath)
+            }
+            macOSCreatingProgress.removeValue(forKey: id)
+            print("[ClawVM]   linux disk ready (\(diskGb) GB) at \(diskPath.path)")
+        } catch {
+            let errMsg = error.localizedDescription
+            print("[ClawVM] createLinuxVMAndInstall failed: \(errMsg)")
+            macOSInstallError[id] = errMsg
+            macOSCreatingProgress.removeValue(forKey: id)
+        }
+    }
+
+    private enum DiskImageLocation {
+        case local(String)
+        case remote(URL)
+        /// Published bia release. bia-os.json names the arm64 `.img.xz`.
+        case githubRelease(tag: String)
+    }
+
+    private func resolveDiskImage(_ raw: String) async throws -> DiskImageLocation {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("github.com/") || s.hasPrefix("www.github.com/") {
+            s = "https://" + s
+        }
+        if s.hasPrefix("file://") || s.hasPrefix("/") || s.hasPrefix("~") {
+            guard let path = resolveLocalImagePath(s) else {
+                throw clawError("Disk image not found: \(raw)")
+            }
+            return .local(path)
+        }
+        guard let url = URL(string: s), let scheme = url.scheme?.lowercased(),
+            scheme == "http" || scheme == "https"
+        else {
+            throw clawError("Enter a file:// path or an https URL")
+        }
+        if let release = githubRelease(from: url) {
+            return try await resolveGithubRelease(release)
+        }
+        return .remote(url)
+    }
+
+    /// Local path, or nil when the file is missing. Accepts file://, ~, and absolute paths.
+    private func resolveLocalImagePath(_ raw: String) -> String? {
+        var resolved = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if resolved.hasPrefix("file://") {
+            let encoded = resolved.replacingOccurrences(of: " ", with: "%20")
+            if let url = URL(string: encoded), url.isFileURL {
+                resolved = url.path
+            }
+        }
+        resolved = (resolved as NSString).expandingTildeInPath
+        resolved = (resolved as NSString).standardizingPath
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolved, isDirectory: &isDir), !isDir.boolValue
+        else { return nil }
+        return resolved
+    }
+
+    private struct GithubReleaseRef {
+        let owner: String
+        let repo: String
+        let tag: String?  // nil = latest
+    }
+
+    /// Repo page, /releases, /releases/latest, or /releases/tag/<tag>. A direct asset URL returns nil.
+    private func githubRelease(from url: URL) -> GithubReleaseRef? {
+        let host = url.host?.lowercased() ?? ""
+        guard host == "github.com" || host == "www.github.com" else { return nil }
+        var parts = url.path.split(separator: "/").map(String.init)
+        guard parts.count >= 2 else { return nil }
+        let owner = parts.removeFirst()
+        var repo = parts.removeFirst()
+        if repo.hasSuffix(".git") { repo.removeLast(4) }
+        if parts.isEmpty || parts == ["releases"] || parts == ["releases", "latest"] {
+            return GithubReleaseRef(owner: owner, repo: repo, tag: nil)
+        }
+        if parts.count == 3 && parts[0] == "releases" && parts[1] == "tag" {
+            return GithubReleaseRef(owner: owner, repo: repo, tag: parts[2])
+        }
+        return nil
+    }
+
+    private struct GithubRelease: Decodable {
+        struct Asset: Decodable {
+            let name: String
+            let browserDownloadUrl: String
+            enum CodingKeys: String, CodingKey {
+                case name
+                case browserDownloadUrl = "browser_download_url"
+            }
+        }
+        let tagName: String
+        let assets: [Asset]
+        enum CodingKeys: String, CodingKey {
+            case tagName = "tag_name"
+            case assets
+        }
+    }
+
+    /// An arm64 .img is downloaded as-is. Otherwise the release must list
+    /// bia-os.json and bia-arm64.img.xz.
+    private func resolveGithubRelease(_ ref: GithubReleaseRef) async throws -> DiskImageLocation {
+        let api: String
+        if let tag = ref.tag, !tag.isEmpty {
+            let encoded = tag.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? tag
+            api = "https://api.github.com/repos/\(ref.owner)/\(ref.repo)/releases/tags/\(encoded)"
+        } else {
+            api = "https://api.github.com/repos/\(ref.owner)/\(ref.repo)/releases/latest"
+        }
+        guard let apiURL = URL(string: api) else {
+            throw clawError("Bad GitHub URL")
+        }
+        var request = URLRequest(url: apiURL)
+        request.setValue("ClawHome", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            throw clawError(
+                "No bia release on \(ref.owner)/\(ref.repo). GitHub returned \(status). Paste a file:// path to a local disk image."
+            )
+        }
+        let release = try JSONDecoder().decode(GithubRelease.self, from: data)
+        let byName: [String: URL] = Dictionary(
+            uniqueKeysWithValues: release.assets.compactMap { asset in
+                guard let url = URL(string: asset.browserDownloadUrl) else { return nil }
+                return (asset.name, url)
+            })
+        let ranked: [(url: URL, score: Int)] = release.assets.compactMap { asset in
+            guard let score = arm64ImageScore(asset.name), let url = byName[asset.name] else { return nil }
+            return (url, score)
+        }
+        if let best = ranked.max(by: { $0.score < $1.score }) {
+            print("[ClawVM]   github image \(best.url.absoluteString)")
+            return .remote(best.url)
+        }
+        let need = ["bia-os.json", "bia-arm64.img.xz"]
+        guard need.allSatisfy({ byName[$0] != nil }) else {
+            throw clawError(
+                "The bia release has no arm64 system. Paste a file:// path to a raw disk image (dist/bia.img)."
+            )
+        }
+        let tag = release.tagName.isEmpty ? (ref.tag ?? "latest") : release.tagName
+        guard !tag.isEmpty, !tag.contains("/"), !tag.contains("..") else {
+            throw clawError("The bia release tag is not usable")
+        }
+        print("[ClawVM]   github release \(tag) image bia-arm64.img.xz")
+        return .githubRelease(tag: tag)
+    }
+
+    /// Download the arm64 image named by bia-os.json, check it, and unpack it onto the home disk.
+    /// Spare room after the image lets the guest grow the filesystem on first boot.
+    private func writeReleaseDisk(osTag: String, to diskPath: URL, vmId: String) async throws {
+        let base = "https://github.com/zond80/bia/releases/download/\(osTag)"
+        guard let manifestURL = URL(string: "\(base)/bia-os.json") else {
+            throw clawError("Bad bia release URL")
+        }
+        macOSCreatingProgress[vmId] = ("Reading the bia release", 0.02)
+        let (manifestData, response) = try await URLSession.shared.data(from: manifestURL)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            throw clawError("bia-os.json: HTTP \(status)")
+        }
+        let manifest = try JSONDecoder().decode(BiaOsManifest.self, from: manifestData)
+        guard let image = manifest.os["arm64"]?.image else {
+            throw clawError("Release \(manifest.tag) has no arm64 system")
+        }
+        guard !image.file.contains("/"), !image.file.contains(".."), image.file.hasSuffix(".img.xz") else {
+            throw clawError("bia-os.json names an unexpected disk image")
+        }
+        guard let fileURL = URL(string: "\(base)/\(image.file)") else {
+            throw clawError("Bad disk image URL")
+        }
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("clawhome/bia-os/\(osTag)", isDirectory: true)
+        try FileManager.default.createDirectory(at: caches, withIntermediateDirectories: true)
+        let packed = caches.appendingPathComponent(image.file)
+        let packedOK = FileManager.default.fileExists(atPath: packed.path)
+            && (try? Self.fileSize(packed)) == image.size
+            && (try? Self.sha256Hex(of: packed))?.caseInsensitiveCompare(image.sha256) == .orderedSame
+        if packedOK {
+            macOSCreatingProgress[vmId] = ("bia \(manifest.tag) is already downloaded", 0.4)
+        } else {
+            _ = try await downloadWithProgress(from: fileURL, vmId: vmId, to: packed)
+            macOSCreatingProgress[vmId] = ("Checking the download", 0.70)
+            let expectedSize = image.size
+            let expectedSha = image.sha256
+            let packedPath = packed
+            let (got, digest) = try await Task.detached {
+                let got = try Self.fileSize(packedPath)
+                let digest = try Self.sha256Hex(of: packedPath) { done in
+                    let fraction = 0.70 + 0.05 * Double(done) / Double(max(expectedSize, 1))
+                    Task { @MainActor in
+                        ClawVMManager.shared.macOSCreatingProgress[vmId] = ("Checking the download", fraction)
+                    }
+                }
+                return (got, digest)
+            }.value
+            guard got == expectedSize else {
+                try? FileManager.default.removeItem(at: packed)
+                throw clawError("Downloaded \(got) bytes, the release says \(expectedSize)")
+            }
+            guard digest.caseInsensitiveCompare(expectedSha) == .orderedSame else {
+                try? FileManager.default.removeItem(at: packed)
+                throw clawError("The download does not match the release")
+            }
+        }
+        macOSCreatingProgress[vmId] = ("Unpacking the disk image", 0.75)
+        if FileManager.default.fileExists(atPath: diskPath.path) {
+            try FileManager.default.removeItem(at: diskPath)
+        }
+        FileManager.default.createFile(atPath: diskPath.path, contents: nil)
+        let rawSize = image.rawSize
+        let rawSha = image.rawSha256
+        let packedPath = packed
+        let disk = diskPath
+        let written = try await Task.detached { () -> UInt64 in
+            let out = try FileHandle(forWritingTo: disk)
+            let written = try Self.decompressXz(packedPath, into: out, rawSize: rawSize, vmId: vmId)
+            try out.close()
+            return written
+        }.value
+        guard written == rawSize else {
+            throw clawError("Unpacked \(written) bytes, the release says \(rawSize)")
+        }
+        macOSCreatingProgress[vmId] = ("Checking the disk image", 0.95)
+        let rawDigest = try await Task.detached {
+            try Self.sha256Hex(of: disk, count: rawSize) { done in
+                let fraction = 0.95 + 0.03 * Double(done) / Double(max(rawSize, 1))
+                Task { @MainActor in
+                    ClawVMManager.shared.macOSCreatingProgress[vmId] = ("Checking the disk image", fraction)
+                }
+            }
+        }.value
+        guard rawDigest.caseInsensitiveCompare(rawSha) == .orderedSame else {
+            throw clawError("The unpacked disk does not match the release")
+        }
+        let configPath = diskPath.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("config.json")
+        var want: UInt64 = 16 * 1024 * 1024 * 1024
+        if let data = try? Data(contentsOf: configPath),
+            let cfg = try? JSONDecoder().decode(VMConfig.self, from: data)
+        {
+            want = UInt64(max(1, cfg.diskGb)) * 1024 * 1024 * 1024
+        }
+        if want > written {
+            let grown = try FileHandle(forWritingTo: diskPath)
+            try grown.truncate(atOffset: want)
+            try grown.close()
+        }
+    }
+
+    private struct BiaOsManifest: Decodable {
+        struct Image: Decodable {
+            let file: String
+            let size: UInt64
+            let sha256: String
+            let rawSize: UInt64
+            let rawSha256: String
+            enum CodingKeys: String, CodingKey {
+                case file, size, sha256
+                case rawSize = "raw_size"
+                case rawSha256 = "raw_sha256"
+            }
+        }
+        struct Os: Decodable {
+            let image: Image
+        }
+        let tag: String
+        let os: [String: Os]
+    }
+
+    nonisolated private static func fileSize(_ url: URL) throws -> UInt64 {
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        return (attrs[.size] as? NSNumber)?.uint64Value ?? 0
+    }
+
+    nonisolated private static func sha256Hex(
+        of url: URL, count: UInt64? = nil, onProgress: ((UInt64) -> Void)? = nil
+    ) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        var seen: UInt64 = 0
+        var reported: UInt64 = 0
+        var left = count
+        while left == nil || left! > 0 {
+            let n = Int(min(left ?? (1 << 20), 1 << 20))
+            let chunk = handle.readData(ofLength: n)
+            if chunk.isEmpty { break }
+            hasher.update(data: chunk)
+            seen += UInt64(chunk.count)
+            if let remaining = left { left = remaining - UInt64(chunk.count) }
+            if seen - reported >= (32 << 20) {
+                reported = seen
+                onProgress?(seen)
+            }
+        }
+        onProgress?(seen)
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Bytes unpacked so far, for the install bar. The decoder calls this off the main thread.
+    private final class UnpackMeter: @unchecked Sendable {
+        let total: UInt64
+        let vmId: String
+        private let lock = NSLock()
+        private var last: UInt64 = 0
+        init(total: UInt64, vmId: String) {
+            self.total = total
+            self.vmId = vmId
+        }
+        func report(_ written: UInt64) {
+            lock.lock()
+            let due = written >= last + (8 << 20) || written >= total
+            if due { last = written }
+            lock.unlock()
+            guard due else { return }
+            let fraction = 0.75 + 0.20 * Double(written) / Double(max(total, 1))
+            let vmId = vmId
+            Task { @MainActor in
+                ClawVMManager.shared.macOSCreatingProgress[vmId] = (
+                    "Unpacking the disk image", min(fraction, 0.95))
+            }
+        }
+    }
+
+    nonisolated private static func decompressXz(
+        _ src: URL, into dst: FileHandle, rawSize: UInt64, vmId: String
+    ) throws -> UInt64 {
+        var written: UInt64 = 0
+        var err = [CChar](repeating: 0, count: 256)
+        let meter = UnpackMeter(total: rawSize, vmId: vmId)
+        let ctx = Unmanaged.passRetained(meter).toOpaque()
+        defer { Unmanaged<UnpackMeter>.fromOpaque(ctx).release() }
+        let rc = src.path.withCString { path in
+            err.withUnsafeMutableBufferPointer { buf in
+                cxz_decompress_file(
+                    path, dst.fileDescriptor, &written, buf.baseAddress, buf.count,
+                    { bytes, raw in
+                        guard let raw else { return }
+                        Unmanaged<UnpackMeter>.fromOpaque(raw).takeUnretainedValue().report(bytes)
+                    }, ctx)
+            }
+        }
+        if rc != 0 {
+            let message = String(cString: err)
+            throw clawErrorStatic(message.isEmpty ? "Could not unpack the disk image" : message)
+        }
+        return written
+    }
+
+    /// nil when the asset is not an arm64 (or generic) disk image.
+    private func arm64ImageScore(_ name: String) -> Int? {
+        let n = name.lowercased()
+        guard n.hasSuffix(".img") else { return nil }
+        let arm = n.contains("arm64") || n.contains("aarch64")
+        let x86 = n.contains("x86") || n.contains("amd64") || n.contains("x64")
+        if x86 && !arm { return nil }
+        var score = 1
+        if arm { score += 10 }
+        if n.contains("bia") { score += 2 }
+        return score
+    }
+
+    private func cloneOrCopyDisk(from src: String, to dst: URL) async throws {
+        let dstPath = dst.path
+        try await Task.detached {
+            if FileManager.default.fileExists(atPath: dstPath) {
+                try FileManager.default.removeItem(atPath: dstPath)
+            }
+            let cloned = src.withCString { srcPtr in
+                dstPath.withCString { dstPtr in
+                    copyfile(srcPtr, dstPtr, nil, copyfile_flags_t(COPYFILE_CLONE))
+                }
+            }
+            if cloned == 0 { return }
+            let copied = src.withCString { srcPtr in
+                dstPath.withCString { dstPtr in
+                    copyfile(srcPtr, dstPtr, nil, copyfile_flags_t(COPYFILE_ALL))
+                }
+            }
+            if copied != 0 {
+                throw NSError(
+                    domain: "ClawVM", code: 6,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Could not copy disk image (\(String(cString: strerror(errno))))"
+                    ])
+            }
+        }.value
+    }
+
+    /// Returns the image size in GB. Requires a raw GPT disk (bia.img), not root.img.
+    private func assertBootableDiskImage(_ url: URL) throws -> Int {
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        let size = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
+        guard size >= 1024 * 1024, size % 512 == 0 else {
+            throw clawError("Disk image is empty or not a raw disk image")
+        }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: 512)
+        let sig = handle.readData(ofLength: 8)
+        guard sig == Data("EFI PART".utf8) else {
+            throw clawError(
+                "This file is not a bootable bia disk image. Use a raw GPT disk such as dist/bia.img, not root.img."
+            )
+        }
+        let gb = size / (1024 * 1024 * 1024)
+        return Int(max(1, gb))
+    }
+
+    /// Mount the image's FAT ESP and write EFI/bia/fmm.json. The key was already checked.
+    private func writeFmmToEsp(diskImage: URL, json: String, sourcePath: String?) async throws {
+        guard json.utf8.count < 1_000_000 else {
+            throw clawError("Cloud AI config is too large")
+        }
+        guard let data = json.data(using: .utf8),
+            let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let key = obj["api_key"] as? String, !key.trimmingCharacters(in: .whitespaces).isEmpty
+        else {
+            throw clawError("Cloud AI config is missing an API key")
+        }
+        let hasChatgpt = obj["chatgpt"] != nil
+        try await Task.detached {
+            let attach = try Self.run(
+                "/usr/bin/hdiutil",
+                [
+                    "attach", "-nomount", "-imagekey", "diskimage-class=CRawDiskImage",
+                    diskImage.path,
+                ])
+            guard let dev = Self.wholeDisk(in: attach) else {
+                throw Self.clawErrorStatic("Could not attach the disk image")
+            }
+            let slice = dev + "s1"
+            defer {
+                _ = try? Self.run("/usr/sbin/diskutil", ["unmount", slice])
+                _ = try? Self.run("/usr/bin/hdiutil", ["detach", dev])
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+            _ = try Self.run("/usr/sbin/diskutil", ["mount", slice])
+            let mount = try Self.mountPoint(of: slice)
+            let dir = URL(fileURLWithPath: mount).appendingPathComponent("EFI/bia", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try data.write(to: dir.appendingPathComponent("fmm.json"))
+        }.value
+        if hasChatgpt, let sourcePath, sourcePath.lowercased().hasSuffix(".json") {
+            releaseChatgptFile(at: sourcePath)
+        }
+    }
+
+    /// A ChatGPT sign-in rotates. Once it is on the disk, drop it from the local fmm.json.
+    private func releaseChatgptFile(at path: String) {
+        let url = URL(fileURLWithPath: path)
+        guard var obj = (try? Data(contentsOf: url)).flatMap({
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        }), obj["chatgpt"] != nil else { return }
+        obj.removeValue(forKey: "chatgpt")
+        obj["api_key"] = ""
+        guard let out = try? JSONSerialization.data(
+            withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
+        else { return }
+        try? out.write(to: url, options: .atomic)
+        print("[ClawVM]   ChatGPT sign-in now lives on this home; removed it from \(path)")
+    }
+
+    nonisolated private static func wholeDisk(in output: String) -> String? {
+        for line in output.split(whereSeparator: \.isNewline) {
+            guard let token = line.split(whereSeparator: \.isWhitespace).first else { continue }
+            let dev = String(token)
+            guard dev.hasPrefix("/dev/disk") else { continue }
+            let suffix = dev.dropFirst("/dev/disk".count)
+            if !suffix.isEmpty, suffix.allSatisfy(\.isNumber) { return dev }
+        }
+        return nil
+    }
+
+    nonisolated private static func mountPoint(of slice: String) throws -> String {
+        let info = try run("/usr/sbin/diskutil", ["info", slice])
+        for line in info.split(whereSeparator: \.isNewline) {
+            let text = String(line)
+            guard text.contains("Mount Point") else { continue }
+            let parts = text.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+            let value = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
+            if value.hasPrefix("/") { return value }
+        }
+        throw clawErrorStatic("The disk's EFI partition did not mount")
+    }
+
+    nonisolated private static func run(_ launch: String, _ args: [String]) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: launch)
+        process.arguments = args
+        let out = Pipe()
+        let err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        try process.run()
+        process.waitUntilExit()
+        let stdout = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stderr = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        if process.terminationStatus != 0 {
+            let message = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw clawErrorStatic(message.isEmpty ? "\(launch) failed" : message)
+        }
+        return stdout
+    }
+
+    nonisolated private static func clawErrorStatic(_ message: String) -> NSError {
+        NSError(domain: "ClawVM", code: 6, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private func clawError(_ message: String) -> NSError {
+        NSError(domain: "ClawVM", code: 6, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     func createMacOSVMAndInstall(id: String, vmDir: URL, ipswPath: String? = nil) async {
@@ -541,7 +1123,7 @@ public class ClawVMManager {
 
             var vmConfig = VMConfig(
                 id: id, name: "\(id)", ramMb: 4096, diskGb: 128, guestType: "macos",
-                isoPath: nil, ipswPath: ipswURLToUse.path, macAddress: nil)
+                isoPath: nil, ipswPath: ipswURLToUse.path, macAddress: nil, imageUrl: nil)
             if let data = try? Data(contentsOf: configPath),
                 let c = try? JSONDecoder().decode(VMConfig.self, from: data)
             {
@@ -612,24 +1194,120 @@ public class ClawVMManager {
         }
         let delegate = DownloadDelegate(destination: destination)
         let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 120
+        config.timeoutIntervalForResource = 6 * 60 * 60
         let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
         let task = session.downloadTask(with: url)
         let progress = task.progress
-        let obs = progress.observe(\.fractionCompleted, options: [.initial, .new]) {
-            [weak self] prog, _ in
+        let watch = DownloadWatch()
+        let obs = progress.observe(\.fractionCompleted, options: [.initial, .new]) { prog, _ in
+            guard watch.isLive() else { return }
+            let fraction = 0.02 + 0.68 * min(prog.fractionCompleted, 1)
             Task { @MainActor in
+                guard watch.isLive() else { return }
                 let name = ClawVMManager.shared.displayName(for: vmId)
-                self?.macOSCreatingProgress[vmId] = (
-                    "Downloading \(name)'s home", prog.fractionCompleted
+                ClawVMManager.shared.macOSCreatingProgress[vmId] = (
+                    "Downloading \(name)'s home", fraction
                 )
             }
         }
-        defer { obs.invalidate() }
+        defer {
+            watch.stop()
+            obs.invalidate()
+        }
         return try await withCheckedThrowingContinuation {
             (cont: CheckedContinuation<URL, Error>) in
             delegate.continuation = cont
             task.resume()
         }
+    }
+
+    /// Lets a finished download stop updating the bar before the next phase starts.
+    private final class DownloadWatch: @unchecked Sendable {
+        private let lock = NSLock()
+        private var live = true
+        func stop() {
+            lock.lock()
+            live = false
+            lock.unlock()
+        }
+        func isLive() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return live
+        }
+    }
+
+    func createLinuxVM(at vmDir: URL) throws -> (VZVirtualMachine, FileHandle?) {
+        let dataDir = vmDir.appendingPathComponent("Data")
+        let diskPath = dataDir.appendingPathComponent("disk.img")
+        let efiURL = dataDir.appendingPathComponent("efi-variable-store")
+        guard FileManager.default.fileExists(atPath: diskPath.path) else {
+            throw NSError(
+                domain: "ClawVM", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Linux disk image missing"])
+        }
+        guard FileManager.default.fileExists(atPath: efiURL.path) else {
+            throw NSError(
+                domain: "ClawVM", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "EFI variable store missing — create the home again"])
+        }
+
+        let config = VZVirtualMachineConfiguration()
+        config.platform = VZGenericPlatformConfiguration()
+        let bootLoader = VZEFIBootLoader()
+        bootLoader.variableStore = VZEFIVariableStore(url: efiURL)
+        config.bootLoader = bootLoader
+
+        var vmRamMb = ClawVMConstants.vmRamMb
+        let configPath = vmDir.appendingPathComponent("config.json")
+        if let data = try? Data(contentsOf: configPath),
+            let vmConfig = try? JSONDecoder().decode(VMConfig.self, from: data)
+        {
+            vmRamMb = UInt64(max(2048, min(65536, vmConfig.ramMb)))
+        }
+        config.cpuCount = ClawVMConstants.vmCpus
+        config.memorySize = vmRamMb * 1024 * 1024
+
+        let diskAttachment = try VZDiskImageStorageDeviceAttachment(url: diskPath, readOnly: false)
+        config.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)]
+
+        let networkDevice = VZVirtioNetworkDeviceConfiguration()
+        networkDevice.attachment = VZNATNetworkDeviceAttachment()
+        networkDevice.macAddress = try getOrCreateMacAddress(vmDir: vmDir)
+        config.networkDevices = [networkDevice]
+
+        let graphics = VZVirtioGraphicsDeviceConfiguration()
+        graphics.scanouts = [
+            VZVirtioGraphicsScanoutConfiguration(
+                widthInPixels: Int(virtualDisplayWidth), heightInPixels: Int(virtualDisplayHeight))
+        ]
+        config.graphicsDevices = [graphics]
+
+        config.keyboards = [VZUSBKeyboardConfiguration()]
+        config.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
+        config.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+
+        let share = VZVirtioFileSystemDeviceConfiguration(tag: "clawhome")
+        share.share = createClipboardShareConfig().share
+        config.directorySharingDevices = [share]
+
+        let serialLogPath = vmDir.appendingPathComponent("serial.log")
+        FileManager.default.createFile(atPath: serialLogPath.path, contents: nil)
+        var serialHandle: FileHandle?
+        if let serialFile = try? FileHandle(forWritingTo: serialLogPath) {
+            try? serialFile.truncate(atOffset: 0)
+            serialHandle = serialFile
+            let serialAttachment = VZFileHandleSerialPortAttachment(
+                fileHandleForReading: nil, fileHandleForWriting: serialFile)
+            let serialConfig = VZVirtioConsoleDeviceSerialPortConfiguration()
+            serialConfig.attachment = serialAttachment
+            config.serialPorts = [serialConfig]
+            print("[ClawVM]   serial port -> \(serialLogPath.path)")
+        }
+
+        try config.validate()
+        return (VZVirtualMachine(configuration: config), serialHandle)
     }
 
     func createMacOSVM(at vmDir: URL) throws -> (VZVirtualMachine, FileHandle?) {
@@ -743,14 +1421,17 @@ public class ClawVMManager {
             vmConfig = c
         }
         let guestType = vmConfig?.guestType ?? "macos"
-        guard guestType == "macos" else {
+        print("[ClawVM]   creating \(guestType) VM config...")
+        let (vm, serialHandle): (VZVirtualMachine, FileHandle?)
+        if guestType == "linux" {
+            (vm, serialHandle) = try createLinuxVM(at: vmDir)
+        } else if guestType == "macos" {
+            (vm, serialHandle) = try createMacOSVM(at: vmDir)
+        } else {
             throw NSError(
                 domain: "ClawVM", code: 4,
-                userInfo: [NSLocalizedDescriptionKey: "Only macOS VMs supported"])
+                userInfo: [NSLocalizedDescriptionKey: "Unknown system \(guestType)"])
         }
-
-        print("[ClawVM]   creating macOS VM config...")
-        let (vm, serialHandle) = try createMacOSVM(at: vmDir)
         let view = VZVirtualMachineView()
         view.virtualMachine = vm
         view.capturesSystemKeys = true
@@ -787,7 +1468,9 @@ public class ClawVMManager {
         try await vm.start()
         print("[ClawVM]   VM started, state=\(vm.state.rawValue)")
 
-        reconfigureDisplayToFullHD(vm)
+        if guestType == "macos" {
+            reconfigureDisplayToFullHD(vm)
+        }
 
         let clipboardSync = ClipboardSync(sharedDirectory: ClawVMConstants.clipboardSharedDir)
         clipboardSync.start()
