@@ -1,8 +1,8 @@
 # ClawHome
 
-**A private home for your Claw**
+**A secure space for your Claws or bias**
 
-ClawHome is an app that builds secure virtual homes for your Claws directly on your Mac with click of a button.
+ClawHome builds a private virtual home for a Claw or a bia directly on your Mac.
 
 You don't need to buy a separate mac anymore.
 
@@ -26,7 +26,7 @@ You don't need to buy a separate mac anymore.
 
 ## Features
 
-- **macOS VMs** — Create macOS guests with automatic IPSW download (latest supported) or use your own
+- **Homes** — A macOS home for a Claw, or a Linux home for a bia. macOS uses the latest supported IPSW, or one you choose. bia uses the latest disk image from GitHub, or a disk you already have.
 - **Storage** — VMs live in `~/clawhome/homes/{name}/`
 - **Shared directories** — Host folders accessible from the guest
 - **Clipboard sync** — Copy and paste between host and guest
